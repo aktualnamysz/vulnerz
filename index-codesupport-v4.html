@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GS1 CSV + Barcode Generator</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1c2330; --muted: #6b7482;
+    --border: #dfe3ea; --accent: #2457d6; --accent-dark: #1b44ab; --ok: #1a7f4b; --err: #c0332b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14171d; --card: #1c2028; --text: #e8ebf0; --muted: #8d96a5; --border: #2c323d; --accent: #5b8cff; --accent-dark: #7aa1ff; --ok: #4cc38a; --err: #ff7b72; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 14px; font-weight: 600; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input[type=text], input[type=number], select {
+    width: 100%; padding: 9px 11px; font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 8px; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .grid { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
+  .grid .full { grid-column: 1 / -1; }
+  @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+  .hint { font-size: 12.5px; color: var(--muted); margin-top: 5px; }
+  .hint.err { color: var(--err); }
+  .row { display: flex; gap: 8px; align-items: end; }
+  .row > div { flex: 1; }
+  .check { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 14px; margin: 0; cursor: pointer; }
+  .check input { width: 16px; height: 16px; }
+  button {
+    font: inherit; cursor: pointer; border-radius: 8px; padding: 9px 14px; border: 1px solid var(--border);
+    background: var(--card); color: var(--text);
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 11px 18px; }
+  button.primary:hover { background: var(--accent-dark); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .folders { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); margin-top: 14px; }
+  .folder { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+  .folder span { flex: 1; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .folder input { width: 80px; padding: 5px 8px; text-align: right; }
+  .stats { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 12px; }
+  .stat b { display: block; font-size: 20px; }
+  .stat small { color: var(--muted); }
+  .preview { max-height: 320px; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+  .preview .f { color: var(--accent); font-weight: 600; margin-top: 6px; }
+  .preview .f:first-child { margin-top: 0; }
+  .preview .i { padding-left: 18px; }
+  .preview .more { padding-left: 18px; color: var(--muted); }
+  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .status { font-size: 13.5px; color: var(--ok); }
+  .status.err { color: var(--err); }
+  #sample { margin-top: 12px; background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: inline-block; }
+  #sample canvas { display: block; max-width: 100%; height: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>GS1 CSV + Barcode Generator</h1>
+  <p class="sub">Creates folders of .csv files (empty, or filled from an uploaded Excel file) named <span class="mono">00 + key + check digit</span> (key +1 per file), plus one Word file per folder (<span class="mono">BarFolder_N.docx</span>) with a Code 128 barcode for every file name. Runs entirely offline in your browser.</p>
+
+  <div class="card">
+    <h2>1 · Key</h2>
+    <div class="grid">
+      <div class="full">
+        <label for="key">Initial GS1 key (without check digit)</label>
+        <input id="key" type="text" inputmode="numeric" class="mono" value="საწყისი პირველი ფაილის კოდი" autocomplete="off">
+        <div id="keyHint" class="hint"></div>
+      </div>
+      <div>
+        <label for="prefix">File name prefix</label>
+        <input id="prefix" type="text" class="mono" value="00">
+      </div>
+      <div>
+        <label for="folderName">Folder name prefix</label>
+        <input id="folderName" type="text" value="folder_">
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>1b · Excel import (optional)</h2>
+    <div class="grid">
+      <div class="full">
+        <label for="xlsx">Excel file(s) (.xlsx, you can select several) &mdash; column A = numeration, column C = text for the .csv</label>
+        <input id="xlsx" type="file" accept=".xlsx,.xlsm" multiple>
+        <div id="xlsxHint" class="hint">No file loaded. Without one, empty .csv files are generated as before.</div>
+      </div>
+      <div><label class="check"><input id="bom" type="checkbox" checked> UTF-8 BOM (so Excel shows Georgian text correctly)</label></div>
+      <div><button id="clearXlsx" type="button">Remove Excel file</button></div>
+    </div>
+    <div class="hint">Automatic: the last digits of the initial key are replaced by each row's numeration (as many digits as column A's numerations have). Example: key 05205411100014200 with numerations 14200, 14201… gives 00052054111000142000.csv, 00052054111000142017.csv… each containing that row's column C. Folder sizes use the &ldquo;Set every folder to&rdquo; value below.</div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Folders</h2>
+    <div class="row">
+      <div>
+        <label for="folderCount">Amount of folders</label>
+        <input id="folderCount" type="number" min="1" max="1000" value="3">
+      </div>
+      <div>
+        <label for="fillAll">Set every folder to</label>
+        <input id="fillAll" type="number" min="0" value="5">
+      </div>
+      <button id="fillBtn" type="button">Apply to all</button>
+    </div>
+    <div class="hint">Each folder can have its own amount of .csv files:</div>
+    <div id="folders" class="folders"></div>
+  </div>
+
+  <div class="card">
+    <h2>3 · Word files</h2>
+    <div class="grid">
+      <div>
+        <label for="wordName">Word file name prefix</label>
+        <input id="wordName" type="text" value="BarFolder_">
+      </div>
+      <div>
+        <label for="wordLoc">Where to put the Word files</label>
+        <select id="wordLoc">
+          <option value="root">ZIP root (next to the folders)</option>
+          <option value="inside">Inside each folder</option>
+        </select>
+      </div>
+      <div>
+        <label for="pageSize">Page size</label>
+        <select id="pageSize"><option value="letter">US Letter (barcodes 3.89" × 1.34")</option><option value="a4">A4 (barcodes scaled to fit)</option></select>
+      </div>
+      <div><label class="check"><input id="showText" type="checkbox" checked> Show the number under each barcode</label></div>
+      <div><label class="check"><input id="withCsv" type="checkbox" checked> Also include the empty .csv files</label></div>
+    </div>
+    <div class="hint">Layout: 2 large barcodes per row with a small gap between them and a thin line under the whole row; the number is printed inside the picture, right under the bars. A folder with 0 files gets no Word file.</div>
+    <div id="sample"></div>
+  </div>
+
+  <div class="card">
+    <h2>4 · Preview &amp; download</h2>
+    <div class="stats">
+      <div class="stat"><b id="sFolders">0</b><small>folders</small></div>
+      <div class="stat"><b id="sFiles">0</b><small>files</small></div>
+      <div class="stat"><b id="sLast" class="mono">–</b><small>last key used</small></div>
+    </div>
+    <div id="preview" class="preview mono"></div>
+    <div class="actions" style="margin-top:14px">
+      <button id="dl" class="primary" type="button">Download ZIP</button>
+      <span id="status" class="status"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ================= CORE (pure logic, no DOM) ================= */
+// BEGIN_CORE
+
+/* ---------- GS1 check digit ---------- */
+function gs1CheckDigit(key) {
+  // weights 3,1,3,1... starting from the rightmost digit of the key
+  let total = 0;
+  for (let i = 0; i < key.length; i++) {
+    const d = key.charCodeAt(key.length - 1 - i) - 48;
+    total += d * (i % 2 === 0 ? 3 : 1);
+  }
+  return (10 - (total % 10)) % 10;
+}
+
+/* ---------- Code 128 ---------- */
+// bar/space patterns for symbol values 0..105, then the STOP symbol (index 106); each STOP is followed by a 2-module end bar
+const C128 = ["11011001100","11001101100","11001100110","10010011000","10010001100","10001001100","10011001000","10011000100","10001100100","11001001000","11001000100","11000100100","10110011100","10011011100","10011001110","10111001100","10011101100","10011100110","11001110010","11001011100","11001001110","11011100100","11001110100","11101101110","11101001100","11100101100","11100100110","11101100100","11100110100","11100110010","11011011000","11011000110","11000110110","10100011000","10001011000","10001000110","10110001000","10001101000","10001100010","11010001000","11000101000","11000100010","10110111000","10110001110","10001101110","10111011000","10111000110","10001110110","11101110110","11010001110","11000101110","11011101000","11011100010","11011101110","11101011000","11101000110","11100010110","11101101000","11101100010","11100011010","11101111010","11001000010","11110001010","10100110000","10100001100","10010110000","10010000110","10000101100","10000100110","10110010000","10110000100","10011010000","10011000010","10000110100","10000110010","11000010010","11001010000","11110111010","11000010100","10001111010","10100111100","10010111100","10010011110","10111100100","10011110100","10011110010","11110100100","11110010100","11110010010","11011011110","11011110110","11110110110","10101111000","10100011110","10001011110","10111101000","10111100010","11110101000","11110100010","10111011110","10111101110","11101011110","11110101110","11010000100","11010010000","11010011100","11000111010"];
+
+// returns a string of 0/1 modules (1 = bar) for the text
+function code128Modules(text) {
+  const vals = [];
+  let start;
+  if (/^\d+$/.test(text)) {
+    // Code Set C packs two digits per symbol; an odd first digit goes in Code Set B
+    let i = 0;
+    if (text.length % 2 === 1) {
+      start = 104;                                   // START B
+      vals.push(text.charCodeAt(0) - 32);
+      vals.push(99);                                 // switch to C
+      i = 1;
+    } else {
+      start = 105;                                   // START C
+    }
+    for (; i < text.length; i += 2) vals.push(parseInt(text.substr(i, 2), 10));
+  } else {
+    start = 104;                                     // START B
+    for (const ch of text) {
+      const v = ch.charCodeAt(0) - 32;
+      if (v < 0 || v > 95) throw new Error("Character not supported in Code 128 set B: " + ch);
+      vals.push(v);
+    }
+  }
+  let sum = start;
+  vals.forEach((v, idx) => { sum += v * (idx + 1); });
+  const check = sum % 103;
+  return C128[start] + vals.map((v) => C128[v]).join("") + C128[check] + C128[106] + "11";
+}
+
+/* ---------- ZIP writer (stored, no compression) ---------- */
+const CRC_T = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(b) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < b.length; i++) c = CRC_T[(c ^ b[i]) & 255] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+// entries: [{ name, dir?:bool, data?:Uint8Array }]  -> Blob
+function buildZip(entries) {
+  const enc = new TextEncoder();
+  const now = new Date();
+  const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+  const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  const parts = [], central = [];
+  let offset = 0;
+
+  for (const e of entries) {
+    const name = enc.encode(e.name);
+    const data = e.data || new Uint8Array(0);
+    const crc = data.length ? crc32(data) : 0;
+
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true);
+    lh.setUint16(4, 20, true);
+    lh.setUint16(6, 0x0800, true);
+    lh.setUint16(8, 0, true);
+    lh.setUint16(10, dosTime, true);
+    lh.setUint16(12, dosDate, true);
+    lh.setUint32(14, crc, true);
+    lh.setUint32(18, data.length, true);
+    lh.setUint32(22, data.length, true);
+    lh.setUint16(26, name.length, true);
+    lh.setUint16(28, 0, true);
+    parts.push(new Uint8Array(lh.buffer), name, data);
+
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true);
+    ch.setUint16(4, 20, true);
+    ch.setUint16(6, 20, true);
+    ch.setUint16(8, 0x0800, true);
+    ch.setUint16(10, 0, true);
+    ch.setUint16(12, dosTime, true);
+    ch.setUint16(14, dosDate, true);
+    ch.setUint32(16, crc, true);
+    ch.setUint32(20, data.length, true);
+    ch.setUint32(24, data.length, true);
+    ch.setUint16(28, name.length, true);
+    ch.setUint32(38, e.dir ? 0x10 : 0, true);
+    ch.setUint32(42, offset, true);
+    central.push(new Uint8Array(ch.buffer), name);
+
+    offset += 30 + name.length + data.length;
+  }
+  let centralSize = 0;
+  for (const c of central) centralSize += c.length;
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, entries.length, true);
+  end.setUint16(10, entries.length, true);
+  end.setUint32(12, centralSize, true);
+  end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: "application/zip" });
+}
+
+/* ---------- DOCX builder ---------- */
+// items: [{ text, png:Uint8Array, w, h }]  (w,h = pixel size of the png)  -> Promise<Uint8Array> (.docx bytes)
+async function buildDocx(items, showText, pageSize) {
+  const enc = new TextEncoder();
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  // page + column geometry (twips; 1 twip = 635 EMU)
+  let PW, PH, MX, MY, GAP, COL, IMG_W;
+  if (pageSize === "a4") {
+    PW = 11906; PH = 16838; MX = 567; MY = 567; GAP = 559;
+    COL = Math.floor((PW - 2 * MX - GAP) / 2) - 10;     // two equal columns
+    IMG_W = COL * 635 - 12700;                          // fill the column (minus 1 pt)
+  } else {                                              // US Letter: barcodes exactly 3.89" wide (1.34" tall)
+    PW = 12240; PH = 15840; MX = 216; MY = 360;
+    COL = 5603;
+    GAP = PW - 2 * MX - 2 * COL;
+    IMG_W = Math.round(3.89 * 914400);
+  }
+  const LINE = '<w:tcBorders><w:bottom w:val="single" w:sz="4" w:space="0" w:color="808080"/></w:tcBorders>';
+
+  const rels = [];
+  const media = [];
+
+  function drawing(it, n) {
+    const cx = IMG_W, cy = Math.round(IMG_W * it.h / it.w);
+    return '<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">' +
+      '<wp:extent cx="' + cx + '" cy="' + cy + '"/>' +
+      '<wp:docPr id="' + n + '" name="Barcode ' + n + '" descr="' + esc(it.text) + '"/>' +
+      '<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>' +
+      '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+      '<pic:pic><pic:nvPicPr><pic:cNvPr id="' + n + '" name="barcode' + n + '.png"/><pic:cNvPicPr/></pic:nvPicPr>' +
+      '<pic:blipFill><a:blip r:embed="rId' + n + '"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>' +
+      '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + cx + '" cy="' + cy + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>' +
+      '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
+  }
+
+  function cellFor(it, n) {
+    let x = '<w:tc><w:tcPr><w:tcW w:w="' + COL + '" w:type="dxa"/>' + LINE + '<w:vAlign w:val="bottom"/></w:tcPr>';
+    if (!it) return x + '<w:p><w:pPr><w:spacing w:before="100" w:after="100"/></w:pPr></w:p></w:tc>';
+    rels.push('<Relationship Id="rId' + n + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/barcode' + n + '.png"/>');
+    media.push({ name: "word/media/barcode" + n + ".png", data: it.png });
+    x += '<w:p><w:pPr><w:keepNext/><w:spacing w:before="100" w:after="100"/><w:jc w:val="center"/></w:pPr>' + drawing(it, n) + '</w:p>';
+    return x + '</w:tc>';
+  }
+
+  const gapCell = '<w:tc><w:tcPr><w:tcW w:w="' + GAP + '" w:type="dxa"/>' + LINE + '</w:tcPr><w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr></w:p></w:tc>';
+
+  let rows = "";
+  let n = 0;
+  for (let i = 0; i < items.length; i += 2) {
+    const a = items[i], b = items[i + 1];
+    const ca = cellFor(a, ++n);
+    const cb = cellFor(b, b ? ++n : 0);
+    rows += '<w:tr><w:trPr><w:cantSplit/></w:trPr>' + ca + gapCell + cb + '</w:tr>';
+  }
+
+  const doc =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ' +
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ' +
+    'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ' +
+    'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
+    'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>' +
+    '<w:tbl><w:tblPr><w:tblW w:w="' + (COL * 2 + GAP) + '" w:type="dxa"/><w:jc w:val="left"/><w:tblInd w:w="0" w:type="dxa"/><w:tblLayout w:type="fixed"/>' +
+    '<w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr>' +
+    '<w:tblGrid><w:gridCol w:w="' + COL + '"/><w:gridCol w:w="' + GAP + '"/><w:gridCol w:w="' + COL + '"/></w:tblGrid>' +
+    rows + '</w:tbl>' +
+    '<w:p/><w:sectPr><w:pgSz w:w="' + PW + '" w:h="' + PH + '"/><w:pgMar w:top="' + MY + '" w:right="' + MX + '" w:bottom="' + MY + '" w:left="' + MX + '" w:header="283" w:footer="283" w:gutter="0"/></w:sectPr>' +
+    '</w:body></w:document>';
+
+  const contentTypes =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Default Extension="png" ContentType="image/png"/>' +
+    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+    '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>' +
+    '</Types>';
+  const rootRels =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+    '</Relationships>';
+  const docRels =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId900" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>' + rels.join("") + '</Relationships>';
+  const settings =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+    '<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>';
+
+  const entries = [
+    { name: "[Content_Types].xml", data: enc.encode(contentTypes) },
+    { name: "_rels/.rels", data: enc.encode(rootRels) },
+    { name: "word/document.xml", data: enc.encode(doc) },
+    { name: "word/_rels/document.xml.rels", data: enc.encode(docRels) },
+    { name: "word/settings.xml", data: enc.encode(settings) },
+    ...media
+  ];
+  return new Uint8Array(await buildZip(entries).arrayBuffer());
+}
+// END_CORE
+
+/* ================= UI ================= */
+const $ = (id) => document.getElementById(id);
+const MAX_FILES = 200000;
+let counts = [];   // files per folder
+
+/* ---------- barcode -> PNG (canvas) ---------- */
+const MOD_PX = 4, QUIET = 2;
+const cv = document.createElement("canvas");
+
+function drawBarcode(canvas, text, showText) {
+  const mods = code128Modules(text);
+  const barsW = mods.length * MOD_PX;
+  const W = barsW + 2 * QUIET * MOD_PX;
+  const H = Math.round(W * 1.34 / 3.89);              // same proportions as 3.89" x 1.34"
+  const FONT = "Arial, Helvetica, sans-serif";
+  const ctx = canvas.getContext("2d");
+  let fs = 0, gap = 0, textH = 0;
+  if (showText) {
+    ctx.font = "100px " + FONT;
+    fs = 0.8 * barsW / (ctx.measureText(text).width / 100);   // number is ~80% as wide as the bars
+    gap = Math.round(fs * 0.3);
+    textH = Math.ceil(fs * 0.72) + Math.round(fs * 0.1);
+  }
+  const BAR_H = H - (showText ? gap + textH : 0);
+  canvas.width = W; canvas.height = H;                // (resizing clears the canvas)
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#000";
+  let i = 0;
+  while (i < mods.length) {
+    if (mods[i] === "1") {
+      let j = i;
+      while (j < mods.length && mods[j] === "1") j++;
+      ctx.fillRect(QUIET * MOD_PX + i * MOD_PX, 0, (j - i) * MOD_PX, BAR_H);
+      i = j;
+    } else i++;
+  }
+  if (showText) {
+    ctx.font = fs + "px " + FONT;
+    ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+    ctx.fillText(text, W / 2, BAR_H + gap + fs * 0.716);
+  }
+  return { w: W, h: H };
+}
+
+function barcodePng(text, showText) {
+  const size = drawBarcode(cv, text, showText);
+  return new Promise((resolve, reject) => {
+    cv.toBlob((b) => {
+      if (!b) return reject(new Error("Could not create image"));
+      b.arrayBuffer().then((buf) => resolve({ text, png: new Uint8Array(buf), w: size.w, h: size.h }));
+    }, "image/png");
+  });
+}
+
+
+/* ---------- XLSX reader (offline; zip + DecompressionStream) ---------- */
+let excelRows = null;   // [{num: BigInt, text: string}]
+
+async function readXlsx(buf) {
+  const u8 = new Uint8Array(buf), dv = new DataView(buf), dec = new TextDecoder();
+  let e = u8.length - 22;
+  while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) throw new Error("Not a valid .xlsx file");
+  const cnt = dv.getUint16(e + 10, true);
+  let p = dv.getUint32(e + 16, true);
+  const files = {};
+  for (let i = 0; i < cnt; i++) {
+    const nlen = dv.getUint16(p + 28, true), elen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+    const name = dec.decode(u8.subarray(p + 46, p + 46 + nlen));
+    files[name] = { method: dv.getUint16(p + 10, true), csize: dv.getUint32(p + 20, true), lho: dv.getUint32(p + 42, true) };
+    p += 46 + nlen + elen + clen;
+  }
+  async function get(name) {
+    const f = files[name];
+    if (!f) return null;
+    const start = f.lho + 30 + dv.getUint16(f.lho + 26, true) + dv.getUint16(f.lho + 28, true);
+    const raw = u8.subarray(start, start + f.csize);
+    if (f.method === 0) return dec.decode(raw);
+    if (f.method !== 8) throw new Error("Unsupported zip compression");
+    const ds = new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return await new Response(ds).text();
+  }
+  const xml = (t) => new DOMParser().parseFromString(t, "application/xml");
+
+  const sst = [];
+  const sstXml = await get("xl/sharedStrings.xml");
+  if (sstXml) {
+    for (const si of xml(sstXml).getElementsByTagName("si")) {
+      let t = "";
+      for (const x of si.getElementsByTagName("t")) t += x.textContent;
+      sst.push(t);
+    }
+  }
+
+  let sheetPath = "xl/worksheets/sheet1.xml";
+  const wb = await get("xl/workbook.xml"), rel = await get("xl/_rels/workbook.xml.rels");
+  if (wb && rel) {
+    const sh = xml(wb).getElementsByTagName("sheet")[0];
+    const rid = sh && (sh.getAttribute("r:id") || sh.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id"));
+    for (const r of xml(rel).getElementsByTagName("Relationship")) {
+      if (r.getAttribute("Id") === rid) {
+        const t = r.getAttribute("Target");
+        sheetPath = t.startsWith("/") ? t.slice(1) : "xl/" + t;
+      }
+    }
+  }
+  const sheet = await get(sheetPath);
+  if (!sheet) throw new Error("Worksheet not found in the file");
+
+  const rows = [];
+  for (const row of xml(sheet).getElementsByTagName("row")) {
+    const cells = {};
+    for (const c of row.getElementsByTagName("c")) {
+      const col = (c.getAttribute("r") || "").replace(/\d/g, "");
+      if (col !== "A" && col !== "C") continue;
+      const t = c.getAttribute("t");
+      const v = c.getElementsByTagName("v")[0];
+      let val = "";
+      if (t === "inlineStr") { for (const x of c.getElementsByTagName("t")) val += x.textContent; }
+      else if (t === "s") val = v ? (sst[parseInt(v.textContent, 10)] || "") : "";
+      else val = v ? v.textContent : "";
+      cells[col] = val;
+    }
+    const a = (cells.A || "").trim();
+    if (!/^\d+$/.test(a)) continue;                 // skips headers / blank rows
+    rows.push({ num: BigInt(a), text: cells.C || "", w: a.length });
+  }
+  return rows;
+}
+
+// key for a row numeration: initial key with its last <numWidth> digits replaced by the numeration
+function numKey(keyStr, num, w) {
+  const base = BigInt(keyStr.slice(0, Math.max(0, keyStr.length - w)) + "0".repeat(Math.min(w, keyStr.length)));
+  return base + num;
+}
+
+function fitFolders() {
+  if (!excelRows) return;
+  const n = excelRows.length;
+  let per = Math.max(1, parseInt($("fillAll").value, 10) || 1);
+  per = Math.max(per, Math.ceil(n / 1000));
+  $("fillAll").value = per;
+  const fc = Math.max(1, Math.ceil(n / per));
+  $("folderCount").value = fc;
+  counts = [];
+  for (let i = 0; i < fc; i++) counts.push(Math.min(per, n - i * per));
+  renderFolders();
+}
+
+async function loadXlsx(fileList) {
+  const h = $("xlsxHint");
+  try {
+    const all = [], parts = [];
+    for (const f of Array.from(fileList)) {
+      let rows;
+      try { rows = await readXlsx(await f.arrayBuffer()); }
+      catch (err) { throw new Error(f.name + ": " + err.message); }
+      if (!rows.length) throw new Error(f.name + ": no numbers found in column A.");
+      parts.push(f.name + " (" + rows.length.toLocaleString() + ")");
+      for (const r of rows) all.push(r);
+    }
+    if (!all.length) throw new Error("No files selected.");
+    // same numeration (in any row / file) -> one csv, one line per row, column C values in the csv's column A
+    const q = (t) => /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+    const groups = new Map();
+    for (const r of all) {
+      const k = r.num.toString() + "/" + r.w;
+      let g = groups.get(k);
+      if (!g) { g = { num: r.num, w: r.w, lines: [] }; groups.set(k, g); }
+      if (r.text !== "") g.lines.push(q(r.text));
+    }
+    excelRows = Array.from(groups.values()).map((g) => ({ num: g.num, w: g.w, text: g.lines.join("\n"), n: g.lines.length }));
+    const merged = all.length - excelRows.length;
+    h.textContent = all.length.toLocaleString() + " rows from " + parts.length + " file(s): " + parts.join(", ") + " → " +
+      excelRows.length.toLocaleString() + " csv files" + (merged ? " (" + merged.toLocaleString() + " rows share a numeration and were merged into the same csv, one per line)" : "") + ".";
+    h.className = "hint";
+    fitFolders();
+  } catch (err) {
+    excelRows = null;
+    h.textContent = "Could not read the file: " + err.message;
+    h.className = "hint err";
+    renderPreview();
+  }
+}
+
+/* ---------- inputs ---------- */
+function getKey() {
+  const k = $("key").value.trim();
+  if (!/^\d+$/.test(k)) return { err: "Key must contain digits only." };
+  return { key: k };
+}
+
+function renderFolders() {
+  const n = Math.max(0, Math.min(1000, parseInt($("folderCount").value, 10) || 0));
+  const prefix = $("folderName").value;
+  while (counts.length < n) counts.push(parseInt($("fillAll").value, 10) || 0);
+  counts.length = n;
+  const box = $("folders");
+  box.innerHTML = "";
+  counts.forEach((c, i) => {
+    const d = document.createElement("div");
+    d.className = "folder";
+    d.innerHTML = '<span></span><input type="number" min="0">';
+    d.firstChild.textContent = prefix + (i + 1);
+    const inp = d.lastChild;
+    inp.value = c;
+    inp.addEventListener("input", () => {
+      counts[i] = Math.max(0, parseInt(inp.value, 10) || 0);
+      renderPreview();
+    });
+    box.appendChild(d);
+  });
+  renderPreview();
+}
+
+// plan: [{folder, files:[name.csv,...], count}]
+function buildPlan(limit) {
+  const k = getKey();
+  if (k.err) return { err: k.err };
+  const width = k.key.length;
+  let key = BigInt(k.key);
+  const maxKey = 10n ** BigInt(width);
+  const prefix = $("prefix").value;
+  const folderPrefix = $("folderName").value;
+  const total = counts.reduce((a, b) => a + b, 0);
+  if (total > MAX_FILES) return { err: "Too many files (max " + MAX_FILES.toLocaleString() + ")." };
+  if (!excelRows && key + BigInt(total) > maxKey) return { err: "Key would overflow its " + width + "-digit length." };
+
+  const plan = [];
+  let lastKey = null;
+  if (excelRows) {
+    if (total !== excelRows.length) return { err: "Folder counts add up to " + total + " but the Excel file has " + excelRows.length + " rows. Change “Files per folder” to refit." };
+    let idx = 0;
+    for (let i = 0; i < counts.length; i++) {
+      const files = [], texts = [];
+      for (let j = 0; j < counts[i]; j++) {
+        const row = excelRows[idx++];
+        const kv = numKey(k.key, row.num, row.w);
+        if (kv < 0n || kv >= maxKey) return { err: "Numeration " + row.num + " gives a key outside the " + width + "-digit range." };
+        const s = kv.toString().padStart(width, "0");
+        if (limit === undefined || j < limit) files.push(prefix + s + gs1CheckDigit(s) + ".csv");
+        texts.push(row.text);
+        lastKey = s;
+      }
+      plan.push({ folder: folderPrefix + (i + 1), files, texts, count: counts[i] });
+    }
+    return { plan, total, lastKey };
+  }
+  counts.forEach((c, i) => {
+    const files = [];
+    for (let j = 0; j < c; j++) {
+      const s = key.toString().padStart(width, "0");
+      if (limit === undefined || j < limit) files.push(prefix + s + gs1CheckDigit(s) + ".csv");
+      lastKey = s;
+      key += 1n;
+    }
+    plan.push({ folder: folderPrefix + (i + 1), files, count: c });
+  });
+  return { plan, total, lastKey };
+}
+
+function renderPreview() {
+  const hint = $("keyHint");
+  const k = getKey();
+  if (k.err) { hint.textContent = k.err; hint.className = "hint err"; }
+  else if (excelRows) { const fk = numKey(k.key, excelRows[0].num, excelRows[0].w).toString().padStart(k.key.length, "0"); hint.textContent = "First file: " + $("prefix").value + fk + gs1CheckDigit(fk) + ".csv  (numeration " + excelRows[0].num + ")"; hint.className = "hint"; }
+  else { hint.textContent = "First file: " + $("prefix").value + k.key + gs1CheckDigit(k.key) + ".csv  (" + k.key.length + "-digit key)"; hint.className = "hint"; }
+
+  $("sFolders").textContent = counts.length;
+  $("sFiles").textContent = counts.reduce((a, b) => a + b, 0).toLocaleString();
+
+  // sample barcode of the first file
+  const sample = $("sample");
+  sample.innerHTML = "";
+  if (!k.err) {
+    try {
+      const c = document.createElement("canvas");
+      drawBarcode(c, $("prefix").value + k.key + gs1CheckDigit(k.key), $("showText").checked);
+      c.style.width = Math.min(c.width / 2, 330) + "px";
+      sample.appendChild(c);
+    } catch (e) { sample.textContent = e.message; }
+  }
+  sample.style.display = k.err ? "none" : "inline-block";
+
+  const pv = $("preview");
+  const r = buildPlan(4);
+  if (r.err) { pv.textContent = r.err; $("sLast").textContent = "–"; $("dl").disabled = true; return; }
+  $("dl").disabled = r.total === 0;
+  $("sLast").textContent = r.lastKey || "–";
+  pv.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  r.plan.slice(0, 50).forEach((p, idx) => {
+    const f = document.createElement("div"); f.className = "f"; f.textContent = p.folder + "/  (" + p.count + ")  →  " + $("wordName").value + (idx + 1) + ".docx"; frag.appendChild(f);
+    p.files.forEach((n) => { const i = document.createElement("div"); i.className = "i"; i.textContent = n; frag.appendChild(i); });
+    if (p.count > p.files.length) { const m = document.createElement("div"); m.className = "more"; m.textContent = "… +" + (p.count - p.files.length) + " more"; frag.appendChild(m); }
+  });
+  if (r.plan.length > 50) { const m = document.createElement("div"); m.className = "more"; m.textContent = "… +" + (r.plan.length - 50) + " more folders"; frag.appendChild(m); }
+  pv.appendChild(frag);
+}
+
+/* ---------- download ---------- */
+async function download() {
+  const st = $("status"), btn = $("dl");
+  const r = buildPlan();
+  if (r.err) { st.textContent = r.err; st.className = "status err"; return; }
+  btn.disabled = true; st.className = "status";
+  try {
+    const wordPrefix = $("wordName").value;
+    const inside = $("wordLoc").value === "inside";
+    const showText = $("showText").checked;
+    const withCsv = $("withCsv").checked;
+    const bom = $("bom").checked;
+    const entries = [];
+    let done = 0;
+
+    for (let i = 0; i < r.plan.length; i++) {
+      const p = r.plan[i];
+      entries.push({ name: p.folder + "/", dir: true });
+      if (withCsv) p.files.forEach((n, fi) => {
+        let data;
+        if (p.texts) { const b = new TextEncoder().encode(p.texts[fi]); data = bom ? new Uint8Array([0xEF, 0xBB, 0xBF, ...b]) : b; }
+        entries.push({ name: p.folder + "/" + n, dir: false, data });
+      });
+      if (!p.files.length) continue;
+
+      const items = [];
+      for (const fn of p.files) {
+        items.push(await barcodePng(fn.replace(/\.csv$/i, ""), showText));
+        if (++done % 25 === 0) { st.textContent = "Generating barcodes… " + done.toLocaleString() + " / " + r.total.toLocaleString(); await new Promise((res) => setTimeout(res)); }
+      }
+      const docx = await buildDocx(items, showText, $("pageSize").value);
+      const docName = wordPrefix + (i + 1) + ".docx";
+      entries.push({ name: inside ? p.folder + "/" + docName : docName, data: docx });
+    }
+
+    // last key used (without check digit), at the ZIP root
+    if (r.lastKey) {
+      const nextKey = (BigInt(r.lastKey) + 1n).toString().padStart(r.lastKey.length, "0");
+      const txt = "last gs code: " + r.lastKey + "\r\nnext gs code: " + nextKey + "\r\n";
+      entries.push({ name: "last_gs1_code.txt", data: new TextEncoder().encode(txt) });
+    }
+
+    const blob = buildZip(entries);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "gs1_csv_files.zip";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+
+    st.textContent = "Done — " + r.total.toLocaleString() + " barcodes in " + r.plan.filter((p) => p.count).length + " Word files.";
+  } catch (e) {
+    st.textContent = "Error: " + e.message; st.className = "status err";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("folderCount").addEventListener("input", () => {
+  if (excelRows) { const fc = Math.max(1, parseInt($("folderCount").value, 10) || 1); $("fillAll").value = Math.ceil(excelRows.length / fc); fitFolders(); }
+  else renderFolders();
+});
+$("folderName").addEventListener("input", renderFolders);
+$("key").addEventListener("input", renderPreview);
+$("prefix").addEventListener("input", renderPreview);
+$("wordName").addEventListener("input", renderPreview);
+$("showText").addEventListener("change", renderPreview);
+$("fillBtn").addEventListener("click", () => {
+  const v = Math.max(0, parseInt($("fillAll").value, 10) || 0);
+  if (excelRows) { fitFolders(); return; }
+  counts = counts.map(() => v);
+  renderFolders();
+});
+$("xlsx").addEventListener("change", (e) => { if (e.target.files.length) loadXlsx(e.target.files); });
+$("clearXlsx").addEventListener("click", () => {
+  excelRows = null; $("xlsx").value = "";
+  $("xlsxHint").textContent = "No file loaded. Without one, empty .csv files are generated as before.";
+  $("xlsxHint").className = "hint"; renderPreview();
+});
+$("dl").addEventListener("click", download);
+renderFolders();
+</script>
+</body>
+</html>
