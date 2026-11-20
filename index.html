@@ -60,10 +60,32 @@
   .status.err { color: var(--err); }
   #sample { margin-top: 12px; background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: inline-block; }
   #sample canvas { display: block; max-width: 100%; height: auto; }
+  .tabs { display: flex; gap: 8px; margin: 0 0 24px; flex-wrap: wrap; }
+  .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .drop { border: 2px dashed var(--border); border-radius: 10px; padding: 22px; text-align: center; color: var(--muted); }
+  .drop.over { border-color: var(--accent); color: var(--text); }
+  .drop input { margin-top: 8px; }
+  .stats { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 12px; }
+  .stat b { display: block; font-size: 20px; }
+  .stat small { color: var(--muted); }
+  .list { max-height: 180px; overflow: auto; font-size: 13px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-top: 12px; }
+  .list div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 600px) { .cmp { grid-template-columns: 1fr; } }
+  .cmp h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 6px; font-weight: 600; }
+  pre { margin: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; overflow: auto; max-height: 200px; }
+  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+  .status { font-size: 13.5px; color: var(--ok); }
+  .status.err { color: var(--err); }
 </style>
 </head>
 <body>
 <div class="wrap">
+  <div class="tabs">
+    <button id="tabGs1" type="button" class="tab active">GS1 CSV + Barcode Generator</button>
+    <button id="tabTrim" type="button" class="tab">CSV column A trimmer &rarr;</button>
+  </div>
+  <div id="viewGs1">
   <h1>GS1 CSV + Barcode Generator</h1>
   <p class="sub">Creates folders of .csv files (empty, or filled from an uploaded Excel file) named <span class="mono">00 + key + check digit</span> (key +1 per file), plus one Word file per folder (<span class="mono">BarFolder_N.docx</span>) with a Code 128 barcode for every file name. Runs entirely offline in your browser.</p>
 
@@ -158,6 +180,60 @@
       <button id="dl" class="primary" type="button">Download ZIP</button>
       <span id="status" class="status"></span>
     </div>
+  </div>
+  </div>
+  <div id="viewTrim" style="display:none">
+  <h1>CSV Column A Trimmer</h1>
+  <p class="sub">Upload any number of .csv files. The <b>last character of every cell in column A</b> is removed, and you get all files back in one ZIP with their <b>original file names</b>. Runs entirely offline in your browser.</p>
+
+  <div class="card">
+    <h2>1 · CSV files</h2>
+    <div id="tDrop" class="drop">
+      Drop .csv files here, or choose them
+      <div><input id="tFiles" type="file" accept=".csv,.txt,text/csv" multiple></div>
+    </div>
+    <div id="tList" class="list mono" style="display:none"></div>
+    <div id="tLoadHint" class="hint"></div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Options</h2>
+    <div class="grid">
+      <div>
+        <label for="tDelim">Separator between columns</label>
+        <select id="tDelim">
+          <option value=",">Comma ( , )</option>
+          <option value=";">Semicolon ( ; )</option>
+          <option value="&#9;">Tab</option>
+        </select>
+      </div>
+      <div>
+        <label for="tChars">Characters to remove from the end</label>
+        <input id="tChars" type="number" min="1" max="50" value="1">
+      </div>
+      <div><label class="check"><input id="tSkip" type="checkbox"> Leave the first row (header) untouched</label></div>
+      <div><label class="check"><input id="tKeepBom" type="checkbox" checked> Keep UTF-8 BOM if the file has one</label></div>
+    </div>
+    <div class="hint">Only column A changes. All other columns, quotes and line endings stay as they were. Empty cells stay empty.</div>
+  </div>
+
+  <div class="card">
+    <h2>3 · Preview &amp; download</h2>
+    <div class="stats">
+      <div class="stat"><b id="tsFiles">0</b><small>files</small></div>
+      <div class="stat"><b id="tsRows">0</b><small>rows</small></div>
+      <div class="stat"><b id="tsCells">0</b><small>cells trimmed</small></div>
+    </div>
+    <div class="cmp">
+      <div><h3>Before (first file, first rows)</h3><pre id="tBefore" class="mono">–</pre></div>
+      <div><h3>After</h3><pre id="tAfter" class="mono">–</pre></div>
+    </div>
+    <div class="actions">
+      <button id="tDl" class="primary" type="button" disabled>Download ZIP</button>
+      <button id="tClear" type="button">Clear files</button>
+      <span id="tStatus" class="status"></span>
+    </div>
+  </div>
   </div>
 </div>
 
@@ -780,6 +856,174 @@ $("clearXlsx").addEventListener("click", () => {
 });
 $("dl").addEventListener("click", download);
 renderFolders();
+/* ---------- CSV column-A trimming ---------- */
+// Only the first field of each record is changed; the rest of the record is copied exactly as it was.
+function dropLast(s, n) {
+  const chars = Array.from(s);               // counts real characters, not UTF-16 halves
+  return chars.slice(0, Math.max(0, chars.length - n)).join("");
+}
+function needsQuote(s, delim) {
+  return s.indexOf(delim) >= 0 || s.indexOf('"') >= 0 || s.indexOf("\n") >= 0 || s.indexOf("\r") >= 0;
+}
+
+function trimColumnA(text, delim, n, skipHeader) {
+  const out = [];
+  const len = text.length;
+  let i = 0, row = 0, changed = 0;
+  while (i < len) {
+    let val, j, quoted = false;
+    if (text[i] === '"') {
+      quoted = true;
+      val = "";
+      j = i + 1;
+      while (j < len) {
+        if (text[j] === '"' && text[j + 1] === '"') { val += '"'; j += 2; }
+        else if (text[j] === '"') { j++; break; }
+        else val += text[j++];
+      }
+    } else {
+      j = i;
+      while (j < len && text[j] !== delim && text[j] !== "\n" && text[j] !== "\r") j++;
+      val = text.slice(i, j);
+    }
+    // rest of the record, copied untouched, up to a line break outside quotes
+    let k = j, inQ = false;
+    while (k < len) {
+      const c = text[k];
+      if (c === '"') inQ = !inQ;
+      else if (!inQ && (c === "\n" || c === "\r")) break;
+      k++;
+    }
+    const rest = text.slice(j, k);
+    let nl = "";
+    if (k < len) {
+      if (text[k] === "\r" && text[k + 1] === "\n") { nl = "\r\n"; k += 2; }
+      else { nl = text[k]; k++; }
+    }
+    let nv = val;
+    if (!(skipHeader && row === 0) && val !== "") { nv = dropLast(val, n); changed++; }
+    const enc = (quoted || needsQuote(nv, delim)) ? '"' + nv.replace(/"/g, '""') + '"' : nv;
+    out.push(enc + rest + nl);
+    i = k;
+    row++;
+  }
+  return { text: out.join(""), rows: row, changed };
+}
+
+/* ---------- UI ---------- */
+let tFilesList = [];   // { name, text, bom }
+
+function tOpts() {
+  return {
+    delim: $("tDelim").value,
+    n: Math.max(1, Math.min(50, parseInt($("tChars").value, 10) || 1)),
+    skip: $("tSkip").checked
+  };
+}
+
+function tRefresh() {
+  const o = tOpts();
+  let rows = 0, cells = 0;
+  for (const f of tFilesList) {
+    const r = trimColumnA(f.text, o.delim, o.n, o.skip);
+    rows += r.rows; cells += r.changed;
+  }
+  $("tsFiles").textContent = tFilesList.length.toLocaleString();
+  $("tsRows").textContent = rows.toLocaleString();
+  $("tsCells").textContent = cells.toLocaleString();
+  $("tDl").disabled = tFilesList.length === 0;
+
+  const list = $("tList");
+  list.style.display = tFilesList.length ? "block" : "none";
+  list.innerHTML = "";
+  tFilesList.forEach((f) => { const d = document.createElement("div"); d.textContent = f.name; list.appendChild(d); });
+
+  if (tFilesList.length) {
+    const f = tFilesList[0];
+    const before = f.text.split(/\r\n|\n|\r/).slice(0, 6);
+    const after = trimColumnA(f.text, o.delim, o.n, o.skip).text.split(/\r\n|\n|\r/).slice(0, 6);
+    $("tBefore").textContent = before.join("\n");
+    $("tAfter").textContent = after.join("\n");
+  } else {
+    $("tBefore").textContent = "–"; $("tAfter").textContent = "–";
+  }
+}
+
+async function tAddFiles(fileList) {
+  const h = $("tLoadHint");
+  try {
+    const loaded = [];
+    for (const f of Array.from(fileList)) {
+      const buf = await f.arrayBuffer();
+      const u8 = new Uint8Array(buf);
+      const bom = u8.length >= 3 && u8[0] === 0xEF && u8[1] === 0xBB && u8[2] === 0xBF;
+      loaded.push({ name: f.name, text: new TextDecoder("utf-8").decode(buf), bom });
+    }
+    tFilesList = loaded;
+    h.textContent = tFilesList.length.toLocaleString() + " file(s) loaded."; h.className = "hint";
+  } catch (e) {
+    h.textContent = "Could not read the files: " + e.message; h.className = "hint err";
+  }
+  tRefresh();
+}
+
+function tUniqueNames(list) {
+  const seen = new Map(), out = [];
+  for (const f of list) {
+    let name = f.name;
+    if (seen.has(name)) {
+      const c = seen.get(name) + 1; seen.set(name, c);
+      const dot = name.lastIndexOf(".");
+      name = dot > 0 ? name.slice(0, dot) + " (" + c + ")" + name.slice(dot) : name + " (" + c + ")";
+    } else seen.set(name, 1);
+    out.push(name);
+  }
+  return out;
+}
+
+function tDownload() {
+  const st = $("tStatus");
+  st.className = "status";
+  try {
+    const o = tOpts(), keepBom = $("tKeepBom").checked, enc = new TextEncoder();
+    const names = tUniqueNames(tFilesList);
+    const entries = tFilesList.map((f, idx) => {
+      const b = enc.encode(trimColumnA(f.text, o.delim, o.n, o.skip).text);
+      const data = (f.bom && keepBom) ? new Uint8Array([0xEF, 0xBB, 0xBF, ...b]) : b;
+      return { name: names[idx], data };
+    });
+    const blob = buildZip(entries);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "trimmed_csv_files.zip";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    st.textContent = "Done — " + entries.length.toLocaleString() + " file(s) in the ZIP.";
+  } catch (e) {
+    st.textContent = "Error: " + e.message; st.className = "status err";
+  }
+}
+
+$("tFiles").addEventListener("change", (e) => { if (e.target.files.length) tAddFiles(e.target.files); });
+const tDropEl = $("tDrop");
+["dragenter", "dragover"].forEach((t) => tDropEl.addEventListener(t, (e) => { e.preventDefault(); tDropEl.classList.add("over"); }));
+["dragleave", "drop"].forEach((t) => tDropEl.addEventListener(t, (e) => { e.preventDefault(); tDropEl.classList.remove("over"); }));
+tDropEl.addEventListener("drop", (e) => { if (e.dataTransfer.files.length) tAddFiles(e.dataTransfer.files); });
+["tDelim", "tChars", "tSkip"].forEach((id) => $(id).addEventListener("input", tRefresh));
+$("tClear").addEventListener("click", () => { tFilesList = []; $("tFiles").value = ""; $("tLoadHint").textContent = ""; $("tStatus").textContent = ""; tRefresh(); });
+$("tDl").addEventListener("click", tDownload);
+tRefresh();
+
+/* ---------- tabs ---------- */
+function showTab(which) {
+  const g = which === "gs1";
+  $("viewGs1").style.display = g ? "" : "none";
+  $("viewTrim").style.display = g ? "none" : "";
+  $("tabGs1").classList.toggle("active", g);
+  $("tabTrim").classList.toggle("active", !g);
+}
+$("tabGs1").addEventListener("click", () => showTab("gs1"));
+$("tabTrim").addEventListener("click", () => showTab("trim"));
 </script>
 </body>
 </html>
